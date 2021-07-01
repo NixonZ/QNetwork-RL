@@ -30,7 +30,7 @@ class Env(gym.Env,):
         num_priority : int, # Number of priority types
         network : List[List[Tuple]], # A list of list
         nodes_list : List[node], # list of nodes
-        b : int# Number of quantile values to use
+        b : int # Number of quantile values to use
     ):
         # Environment Parameters
         self.arrival = arrival
@@ -49,11 +49,11 @@ class Env(gym.Env,):
                     spaces.Box(low=-np.inf, high=np.inf, shape=(self.num_priority,self.b)) # The Service distribution of the new node
                 )),
                 "add edge": spaces.Tuple((
-                    spaces.Discrete(2**n-2), # Choosing the nodes to connect to the new node.
+                    spaces.Discrete(2**n-1), # Choosing the nodes to connect to the new node.
                     spaces.Box(shape=(1,), low=0, high=np.inf) # The traffic division constant.
                 )),
-                "edit nodes": spaces.Box(low=-np.inf, high=np.inf, shape=(n,self.num_priority,self.b)), # Edit the service distribution of previous present nodes
-                "edit Weights": spaces.Box(low=0.0, high=np.inf, shape=(n,1))
+                "edit nodes": spaces.Box(low=-1.00, high=1.00, shape=(n,self.num_priority,self.b)), # Edit the service distribution of previous present nodes
+                "edit weights": spaces.Box(low=0.0, high=np.inf, shape=(n,))
             }
         )
 
@@ -95,12 +95,28 @@ class Env(gym.Env,):
                 if chosen_edges%2:
                     if len(self.network[i]):
                         for j,adj in enumerate(self.network[i]):
-                            self.network[i][j][1] = adj[1]/( 1.00 + action_parameter[1] )
+                            self.network[i][j] = ( adj[0] , adj[1]/( 1.00 + action_parameter[1] ) )
                         self.network[i].append( ( len(self.network) - 1, action_parameter[1]/( 1.00 + action_parameter[1] ) ) )
                     else:
                         self.network[i].append( ( len(self.network) - 1, 1.00 ) )
                 chosen_edges //= 2
                 i += 1
+        
+        if action_id == "edit nodes":
+            # action_parameter -> (n,p,b)
+            raise NotImplementedError
+
+        if action_id == "edit weights":
+            # action_parameter -> (n,)
+            for i,_ in enumerate(action_parameter):
+                total_traffic = action_parameter[i]
+
+                for j,adj in enumerate(self.network[i]):
+                    total_traffic += adj[1]*action_parameter[adj[0]]
+
+                if total_traffic != 0:
+                    for j,adj in enumerate(self.network[i]):
+                        self.network[i][j] = ( adj[0] , adj[1]*( action_parameter[adj[0]] + action_parameter[i] ) / total_traffic )
 
         return self.get_state(), reward, done, {}
 
