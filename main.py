@@ -1,7 +1,7 @@
 from environment.env import Env,node
 from environment.distribution import U,Exp,distribution
 import numpy as np
-from agent.agent import MPNN
+from agent.agent import MPNN,Graph_Representation
 
 p = 2
 b = 1024
@@ -46,8 +46,9 @@ edge_index = data.edge_index
 edge_attr = data.edge_attr
 x = data.x
 
-forward_message = MPNN((p,b),1,mode='forward').double()
-backward_message = MPNN((p,b),1,mode='backward').double()
+forward_message = MPNN((p,b),1,25,mode='forward').double()
+backward_message = MPNN((p,b),1,25,mode='backward').double()
 x = forward_message.forward(x,edge_attr,edge_index) + backward_message.forward(x,edge_attr,edge_index)
 
-print(x)
+model = Graph_Representation((p,b),1,2500,5000,2).double()
+print(model.forward(data))
