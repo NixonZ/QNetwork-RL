@@ -36,10 +36,14 @@ class distribution():
         temp = np.dot( np.linalg.inv(np.dot(Y.T,Y)) , Y.T)
         self.a = np.dot(temp,X)
 
+    @property
+    def quantile_val(self):
+        return [quantile[0] for quantile in self.quantiles]
+
     @classmethod
     def from_sampler(self,b: int,sampler: Callable[[],float]):
         # Generating data from a distribution
-        data = [ sampler() for _ in range(100000) ]
+        data = [ sampler() for _ in range(10000) ]
         return self.from_data(b,data)
 
     @classmethod
