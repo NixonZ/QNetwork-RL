@@ -1,13 +1,15 @@
 import torch
+from torch.jit.frontend import NotSupportedError
 import torch.nn as nn
+from torch.nn.modules.activation import ReLU
 import torch.optim as optim
 import torch.nn.functional as F
 
-from torch_geometric.utils import from_networkx
-from torch_geometric.data import Data,DataLoader
-
 from torch_scatter import scatter_mean
 from torch_geometric.nn import MessagePassing
+from torch_geometric.data import Data
+
+import numpy as np
 
 def get_default_device():
     """Pick GPU if available, else CPU"""
@@ -23,15 +25,18 @@ class MPNN(MessagePassing):
     def __init__(self,node_embedding_dim,edge_embedding_dim,hidden_node_dim,mode = 'forward'):
         super(MPNN,self).__init__(aggr="add",flow = 'source_to_target' if mode == 'forward' else 'target_to_source',node_dim=0)
 
+        p = node_embedding_dim[0]
+        b = node_embedding_dim[1]
+
         self.reduce = nn.Sequential(
-            nn.Conv2d(2,10,(node_embedding_dim[0],1),padding=(node_embedding_dim[0],0)),
-            nn.Conv2d(10,100,(node_embedding_dim[0],node_embedding_dim[1]//2+1)),
-            nn.Conv2d(100,50,(node_embedding_dim[0],node_embedding_dim[1]//4),stride=(1,node_embedding_dim[1]//16)),
+            nn.Conv2d(2,10,(p,1),padding=(p,0)),
+            nn.Conv2d(10,50,(p,b//2+1)),
+            nn.Conv2d(50,5,(p,b//4),stride=(1,b//16)),
             nn.Flatten(start_dim=1),
-            nn.Linear(50*3*5, hidden_node_dim)
+            nn.Linear(5*3*5, hidden_node_dim)
         )
 
-        self.node_data = nn.ModuleList( [ nn.Linear(hidden_node_dim + edge_embedding_dim,node_embedding_dim[1]) for _ in range(node_embedding_dim[0]) ] )
+        self.node_data = nn.ModuleList( [ nn.Linear(hidden_node_dim + edge_embedding_dim,b) for _ in range(p) ] )
 
     def forward(self,x,edge_attr,edge_index):
         '''
@@ -48,13 +53,16 @@ class MPNN(MessagePassing):
         temp = []
         for i in range(self.node_data.__len__()):
             temp.append(self.node_data[i].forward(x).unsqueeze(1))
-        return torch.cat(temp,dim=1)
+        return torch.cat(temp,dim=1).to(device)
     
 
 class Graph_Representation(nn.Module):
 
     def __init__(self,node_embedding_dim,edge_embedding_dim,hidden_node_dim,graph_dim = 50,prop_steps = 2):
         super(Graph_Representation,self).__init__()
+
+        p = node_embedding_dim[0]
+        b = node_embedding_dim[1]
 
         # Message Passing Layers
         self.prop_steps = prop_steps
@@ -64,18 +72,18 @@ class Graph_Representation(nn.Module):
 
         # Node Dimensionality reduction
         self.reduce = nn.Sequential(
-            nn.Conv2d(1,10,(node_embedding_dim[0],1),padding=(node_embedding_dim[0],0)),
-            nn.Conv2d(10,100,(node_embedding_dim[0],node_embedding_dim[1]//2+1)),
-            nn.Conv2d(100,50,(node_embedding_dim[0],node_embedding_dim[1]//4),stride=(1,node_embedding_dim[1]//16)),
+            nn.Conv2d(1,10,(p,1),padding=(p,0)),
+            nn.Conv2d(10,50,(p,b//2+1)),
+            nn.Conv2d(50,5,(p,b//4),stride=(1,b//16)),
             nn.Flatten(start_dim=1),
-            nn.Linear(50*3*5, hidden_node_dim)
+            nn.Linear(5*3*5, hidden_node_dim)
         )
 
         # Learning Graph representation Layers
         self.gm = nn.Linear(hidden_node_dim,graph_dim)
         self.fm = nn.Linear(hidden_node_dim,graph_dim)
 
-    def forward(self,batch):
+    def forward(self,batch:Data):
         '''
         batch : Batch
         '''
@@ -90,3 +98,225 @@ class Graph_Representation(nn.Module):
         h_G = torch.sum( g * h_v_G , dim = 0 )
 
         return h_G
+
+class Agent(nn.Module):
+    
+    def __init__(self,agent_type,node_embedding_dim,edge_embedding_dim,hidden_node_dim,graph_dim = 50,prop_steps = 2):
+        super(Agent,self).__init__()
+
+        p = node_embedding_dim[0]
+        b = node_embedding_dim[1]
+        self.agent_type = agent_type
+
+        self.f_G = Graph_Representation(node_embedding_dim,edge_embedding_dim,hidden_node_dim,graph_dim,prop_steps)
+
+        if agent_type == "add node":
+            '''
+            k ∈	{0,1}
+            xk ∈ R^(pxb)
+            '''
+            self.policy_network = nn.ModuleList( [ nn.Sequential(nn.Linear(graph_dim+2,b),nn.ReLU()) for _ in range(p) ] )
+            self.action_value = nn.Linear(graph_dim+2+b*p,1)
+        
+        elif agent_type == "add edge":
+            '''
+            k ∈	[1,2^n-1]
+            xk ∈ R
+            '''
+            self.policy_network = nn.Sequential(nn.Linear(graph_dim+1,1),nn.ReLU())
+            self.action_value = nn.Linear(graph_dim+1+1,1)
+
+        elif agent_type == "edit nodes":
+            '''
+            k ∈	[1,n]
+            xk ∈ R^(pxb)
+            '''
+            self.policy_network = nn.ModuleList( [ nn.Linear(graph_dim+1,b) for _ in range(p) ] )
+            self.action_value = nn.Linear(graph_dim+1+b*p,1)
+        
+        elif agent_type == "edit weights":
+            '''
+            k ∈	[1,n]
+            xk ∈ R
+            '''
+            self.policy_network = nn.Linear(graph_dim+1,1)
+            self.action_value = nn.Linear(graph_dim+1+1,1)
+        
+        else:
+            raise NotSupportedError
+
+    def action(self,batch: Data):
+        n = batch.num_nodes
+        h_G = self.f_G.forward(batch)
+
+        max_Q = torch.tensor(-1.0*np.inf)
+        optimal_k = None
+        optimal_xk = None
+        
+        if self.agent_type == "add node":
+            '''
+            k ∈	{0,1}
+            xk ∈ R^(pxb)
+            '''
+            for k in range(2):
+                temp = [0,0]
+                temp[k] = 1
+                x = torch.cat([h_G,torch.tensor(temp).to(device)])
+
+                temp = []
+                for i in range(self.policy_network.__len__()):
+                    temp.append(self.policy_network[i].forward(x).unsqueeze(0))
+                xk = torch.cat(temp,dim=0)
+
+                x = torch.cat([x,xk.flatten()])
+                
+                Q = self.action_value.forward(x)
+                
+                if Q > max_Q:
+                    max_Q = Q
+                    optimal_k = k
+                    optimal_xk = xk
+
+        
+        elif self.agent_type == "add edge":
+            '''
+            k ∈	[1,2^n-1]
+            xk ∈ R
+            '''
+            for k in range(0,2**n-2):
+                x = torch.cat([h_G,torch.tensor([k]).to(device)])
+
+                xk = self.policy_network.forward(x)
+
+                x = torch.cat([x,xk])
+
+                Q = self.action_value.forward(x)
+
+                if Q > max_Q:
+                    max_Q = Q
+                    optimal_k = k
+                    optimal_xk = xk
+
+
+        elif self.agent_type == "edit nodes":
+            '''
+            k ∈	[1,n]
+            xk ∈ R^(pxb)
+            '''
+            for k in range(n):
+                x = torch.cat([h_G,torch.tensor([k]).to(device)])
+
+                temp = []
+                for i in range(self.policy_network.__len__()):
+                    temp.append(self.policy_network[i].forward(x).unsqueeze(0))
+                xk = torch.cat(temp,dim=0)
+
+                x = torch.cat([x,xk.flatten()])
+                
+                Q = self.action_value.forward(x)
+
+                if Q > max_Q:
+                    max_Q = Q
+                    optimal_k = k
+                    optimal_xk = xk
+        
+        elif self.agent_type == "edit weights":
+            '''
+            k ∈	[1,n]
+            xk ∈ R
+            '''
+            for k in range(n):
+                x = torch.cat([h_G,torch.tensor([k]).to(device)])
+
+                xk = self.policy_network.forward(x)
+
+                x = torch.cat([x,xk])
+
+                Q = self.action_value.forward(x)
+
+                if Q > max_Q:
+                    max_Q = Q
+                    optimal_k = k
+                    optimal_xk = xk
+
+        else:
+            raise NotSupportedError
+
+        return optimal_k,optimal_xk
+
+    def forward(self,batch: Data):
+        n = batch.num_nodes
+        h_G = self.f_G.forward(batch)
+
+        if self.agent_type == "add node":
+            '''
+            k ∈	{0,1}
+            xk ∈ R^(pxb)
+            '''
+            for k in range(2):
+                temp = [0,0]
+                temp[k] = 1
+                x = torch.cat([h_G,torch.tensor(temp).to(device)])
+
+                temp = []
+                for i in range(self.policy_network.__len__()):
+                    temp.append(self.policy_network[i].forward(x).unsqueeze(0))
+                xk = torch.cat(temp,dim=0)
+
+                x = torch.cat([x,xk.flatten()])
+                
+                Q = self.action_value.forward(x)
+
+        
+        elif self.agent_type == "add edge":
+            '''
+            k ∈	[1,2^n-1]
+            xk ∈ R
+            '''
+            for k in range(0,2**n-2):
+                x = torch.cat([h_G,torch.tensor([k]).to(device)])
+
+                xk = self.policy_network.forward(x)
+
+                x = torch.cat([x,xk])
+
+                Q = self.action_value.forward(x)
+
+
+        elif self.agent_type == "edit nodes":
+            '''
+            k ∈	[1,n]
+            xk ∈ R^(pxb)
+            '''
+            for k in range(n):
+                x = torch.cat([h_G,torch.tensor([k]).to(device)])
+
+                temp = []
+                for i in range(self.policy_network.__len__()):
+                    temp.append(self.policy_network[i].forward(x).unsqueeze(0))
+                xk = torch.cat(temp,dim=0)
+
+                x = torch.cat([x,xk.flatten()])
+                
+                Q = self.action_value.forward(x)
+
+                
+        
+        elif self.agent_type == "edit weights":
+            '''
+            k ∈	[1,n]
+            xk ∈ R
+            '''
+            for k in range(n):
+                x = torch.cat([h_G,torch.tensor([k]).to(device)])
+
+                xk = self.policy_network.forward(x)
+
+                x = torch.cat([x,xk])
+
+                Q = self.action_value.forward(x)
+
+        else:
+            raise NotSupportedError
+
+        return xk,Q

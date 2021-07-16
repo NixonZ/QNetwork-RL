@@ -87,6 +87,10 @@ class Env(gym.Env,):
             spaces.Box(low=0.0,high=1.0,shape=(n,n))
         ))
 
+    @property
+    def n(self):
+        return len(self.network)
+    
     def step(self,action: Tuple) -> Tuple[Tuple,float,bool,dict]:
 
         action_id = action[0]
@@ -196,7 +200,7 @@ class Env(gym.Env,):
         ta = call_event_type_list(arrival_processes,t)
 
         waiting_time = []
-        System.initialize_CSV("./graph")
+        System.initialize_CSV("./simulation_data")
 
 
         System.logger(t)
@@ -218,5 +222,5 @@ class Env(gym.Env,):
             else:
                 System.departure_updates(least_station_index,t)
             if discrete_events%1000 == 0:
-                System.dump_counter_variable_memory("./graph")
+                System.dump_counter_variable_memory("./simulation_data")
             discrete_events += 1

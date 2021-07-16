@@ -1,7 +1,7 @@
 from environment.env import Env,node
 from environment.distribution import U,Exp,distribution
 import numpy as np
-from agent.agent import MPNN,Graph_Representation
+from agent.agent import MPNN,Graph_Representation,Agent
 
 p = 2
 b = 1024
@@ -46,9 +46,17 @@ edge_index = data.edge_index
 edge_attr = data.edge_attr
 x = data.x
 
-forward_message = MPNN((p,b),1,25,mode='forward').double()
-backward_message = MPNN((p,b),1,25,mode='backward').double()
-x = forward_message.forward(x,edge_attr,edge_index) + backward_message.forward(x,edge_attr,edge_index)
+# forward_message = MPNN((p,b),1,25,mode='forward').double()
+# backward_message = MPNN((p,b),1,25,mode='backward').double()
+# x = forward_message.forward(x,edge_attr,edge_index) + backward_message.forward(x,edge_attr,edge_index)
 
-model = Graph_Representation((p,b),1,2500,5000,2).double()
+print()
+model = Graph_Representation((p,b),1,250,500,2).double()
 print(model.forward(data))
+
+print()
+agent = Agent("edit weights",(p,b),1,25,50,2).double()
+print(agent.forward(data))
+print(agent)
+
+# [ (p.numel(),p.names) for p in agent.parameters() ]
