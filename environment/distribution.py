@@ -52,14 +52,24 @@ class distribution():
         quantiles = [ ( np.quantile(data,i/(b+1)) , i/(b+1) ) for i in range(1,b+1) ]
         return distribution(b,quantiles)
 
-    def sampler(self):
-        # # Sampling from a linear piecewise CDF.
-        # rn = U()
-        # idx = int(self.b*rn)
-        # if idx == b-1:
-        #     return self.quantiles[b-1]
-        # else:
-        #     return (self.quantiles[idx+1] - self.quantiles[idx])*(self.b*rn-idx) + self.quantiles[idx] 
+    def sampler(self,kind = 'QPD'):
+        # Sampling from a linear piecewise CDF.
+        if kind == "piecewise linear":
+            rn = U()
+            idx = int(self.b*rn)
+            if idx == self.b-1:
+                return self.quantiles[self.b-1][0]
+            else:
+                return (self.quantiles[idx+1][0] - self.quantiles[idx][0])*(self.b*rn-idx) + self.quantiles[idx][0]
 
         # Sampling from a Q - lognormal
-        return q_log_normal(U(),self.a)
+        elif kind == "QPD":
+            return q_log_normal(U(),self.a)
+    
+    def distance(self,dist):
+        assert(self.b == dist.b)
+        distance = 0.0
+        for i in range(self.b):
+            temp = self.quantile_val[i] - dist.quantile_val[i]
+            distance += np.abs(temp)
+        return distance

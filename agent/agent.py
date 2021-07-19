@@ -242,11 +242,72 @@ class Agent(nn.Module):
         else:
             raise NotSupportedError
 
-        return optimal_k,optimal_xk
+        return max_Q,optimal_k,optimal_xk
 
-    def forward(self,batch: Data):
+    def action_value_calc(self,batch : Data,k,xk):
         n = batch.num_nodes
         h_G = self.f_G.forward(batch)
+
+        if self.agent_type == "add node":
+            '''
+            k ∈	{0,1}
+            xk ∈ R^(pxb)
+            '''
+            temp = [0,0]
+            temp[k] = 1
+            x = torch.cat([h_G,torch.tensor(temp).to(device)])
+
+            x = torch.cat([x,xk.flatten()])
+            
+            Q = self.action_value.forward(x)
+
+        
+        elif self.agent_type == "add edge":
+            '''
+            k ∈	[1,2^n-1]
+            xk ∈ R
+            '''
+            x = torch.cat([h_G,torch.tensor([k]).to(device)])
+
+            x = torch.cat([x,xk])
+
+            Q = self.action_value.forward(x)
+
+
+        elif self.agent_type == "edit nodes":
+            '''
+            k ∈	[1,n]
+            xk ∈ R^(pxb)
+            '''
+            x = torch.cat([h_G,torch.tensor([k]).to(device)])
+
+            x = torch.cat([x,xk.flatten()])
+            
+            Q = self.action_value.forward(x)
+
+                
+        
+        elif self.agent_type == "edit weights":
+            '''
+            k ∈	[1,n]
+            xk ∈ R
+            '''            
+            x = torch.cat([h_G,torch.tensor([k]).to(device)])
+
+            x = torch.cat([x,xk])
+
+            Q = self.action_value.forward(x)
+
+        else:
+            raise NotSupportedError
+
+        return Q
+
+    def Q_hat(self,batch: Data):
+        n = batch.num_nodes
+        h_G = self.f_G.forward(batch)
+
+        Q_sum = torch.zeros((1),device=device)
 
         if self.agent_type == "add node":
             '''
@@ -265,7 +326,7 @@ class Agent(nn.Module):
 
                 x = torch.cat([x,xk.flatten()])
                 
-                Q = self.action_value.forward(x)
+                Q_sum += self.action_value.forward(x)
 
         
         elif self.agent_type == "add edge":
@@ -280,7 +341,7 @@ class Agent(nn.Module):
 
                 x = torch.cat([x,xk])
 
-                Q = self.action_value.forward(x)
+                Q_sum += self.action_value.forward(x)
 
 
         elif self.agent_type == "edit nodes":
@@ -298,7 +359,7 @@ class Agent(nn.Module):
 
                 x = torch.cat([x,xk.flatten()])
                 
-                Q = self.action_value.forward(x)
+                Q_sum += self.action_value.forward(x)
 
                 
         
@@ -314,9 +375,17 @@ class Agent(nn.Module):
 
                 x = torch.cat([x,xk])
 
-                Q = self.action_value.forward(x)
+                Q_sum += self.action_value.forward(x)
 
         else:
             raise NotSupportedError
 
-        return xk,Q
+        return Q_sum
+
+    def fix_w(self):
+        for param in self.action_value.parameters():
+            param.requires_grad = False
+    
+    def train_w(self):
+        for param in self.action_value.parameters():
+            param.requires_grad = True
