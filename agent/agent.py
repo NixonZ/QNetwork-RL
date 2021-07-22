@@ -115,7 +115,7 @@ class Agent(nn.Module):
             k ∈	{0,1}
             xk ∈ R^(pxb)
             '''
-            self.policy_network = nn.ModuleList( [ nn.Sequential(nn.Linear(graph_dim+2,b),nn.ReLU()) for _ in range(p) ] )
+            self.policy_network = nn.ModuleList( [ nn.Sequential(nn.Linear(graph_dim+2,b),nn.Softplus()) for _ in range(p) ] )
             self.action_value = nn.Linear(graph_dim+2+b*p,1)
         
         elif agent_type == "add edge":
@@ -123,7 +123,7 @@ class Agent(nn.Module):
             k ∈	[1,2^n-1]
             xk ∈ R
             '''
-            self.policy_network = nn.Sequential(nn.Linear(graph_dim+1,1),nn.ReLU())
+            self.policy_network = nn.Sequential(nn.Linear(graph_dim+1,1),nn.Softplus())
             self.action_value = nn.Linear(graph_dim+1+1,1)
 
         elif agent_type == "edit nodes":
@@ -183,7 +183,7 @@ class Agent(nn.Module):
             k ∈	[1,2^n-1]
             xk ∈ R
             '''
-            for k in range(0,2**n-2):
+            for k in range(0,2**(n-1)-2):
                 x = torch.cat([h_G,torch.tensor([k]).to(device)])
 
                 xk = self.policy_network.forward(x)
@@ -243,6 +243,79 @@ class Agent(nn.Module):
             raise NotSupportedError
 
         return max_Q,optimal_k,optimal_xk
+    
+    def rn_action(self,batch: Data,k: int):
+        n = batch.num_nodes
+        h_G = self.f_G.forward(batch)
+        
+        if self.agent_type == "add node":
+            '''
+            k ∈	{0,1}
+            xk ∈ R^(pxb)
+            '''
+            temp = [0,0]
+            temp[k] = 1
+            x = torch.cat([h_G,torch.tensor(temp).to(device)])
+
+            temp = []
+            for i in range(self.policy_network.__len__()):
+                temp.append(self.policy_network[i].forward(x).unsqueeze(0))
+            xk = torch.cat(temp,dim=0)
+
+            x = torch.cat([x,xk.flatten()])
+            
+            Q = self.action_value.forward(x)
+
+        
+        elif self.agent_type == "add edge":
+            '''
+            k ∈	[1,2^n-1]
+            xk ∈ R
+            '''
+            x = torch.cat([h_G,torch.tensor([k]).to(device)])
+
+            xk = self.policy_network.forward(x)
+
+            x = torch.cat([x,xk])
+
+            Q = self.action_value.forward(x)
+
+
+        elif self.agent_type == "edit nodes":
+            '''
+            k ∈	[1,n]
+            xk ∈ R^(pxb)
+            '''
+            # for k in range(n):
+            x = torch.cat([h_G,torch.tensor([k]).to(device)])
+
+            temp = []
+            for i in range(self.policy_network.__len__()):
+                temp.append(self.policy_network[i].forward(x).unsqueeze(0))
+            xk = torch.cat(temp,dim=0)
+
+            x = torch.cat([x,xk.flatten()])
+            
+            Q = self.action_value.forward(x)
+
+        elif self.agent_type == "edit weights":
+            '''
+            k ∈	[1,n]
+            xk ∈ R
+            '''
+            # for k in range(n):
+            x = torch.cat([h_G,torch.tensor([k]).to(device)])
+
+            xk = self.policy_network.forward(x)
+
+            x = torch.cat([x,xk])
+
+            Q = self.action_value.forward(x)
+
+        else:
+            raise NotSupportedError
+
+        return xk,Q
 
     def action_value_calc(self,batch : Data,k,xk):
         n = batch.num_nodes
@@ -334,7 +407,7 @@ class Agent(nn.Module):
             k ∈	[1,2^n-1]
             xk ∈ R
             '''
-            for k in range(0,2**n-2):
+            for k in range(0,2**(n-1)-2):
                 x = torch.cat([h_G,torch.tensor([k]).to(device)])
 
                 xk = self.policy_network.forward(x)

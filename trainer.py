@@ -1,3 +1,5 @@
+from random import random
+import numpy as np
 import torch
 from environment.env import Env
 from agent.agent import Agent,device
@@ -8,7 +10,7 @@ import copy
 import pickle   
 
 class trainer:
-    def __init__(self,p: int,b: int,environment: Env, hidden_node_dim: int, graph_dim: int, prop_steps: int,real_data,max_nodes: int = 10, buffer_size: int = 10000,lr: int = 0.0001) -> None:
+    def __init__(self,p: int,b: int,environment: Env, hidden_node_dim: int, graph_dim: int, prop_steps: int,real_data,max_nodes: int = 10, buffer_size: int = 10000, lr: int = 0.0001, gamma = 0.9, epsilon = 0.1) -> None:
         
         # Agents
         self.agent_addnode = Agent("add node",(p,b),1,hidden_node_dim,graph_dim,prop_steps).double()
@@ -28,6 +30,8 @@ class trainer:
         self.buffer_size = buffer_size
         self.lr = lr
         self.optimizer = Adam(filter(lambda p: p.requires_grad, self.modules.parameters()), lr=lr)
+        self.gamma = gamma
+        self.epsilon = epsilon
         pass
 
     def learn(self):
@@ -64,7 +68,7 @@ class trainer:
 
             Q_list = torch.tensor(Q_list,device=device)
             Q_list_next_state = torch.tensor(Q_list_next_state,device=device)
-            temp =  reward + self.Qmix.forward(end_state,Q_list_next_state) - self.Qmix.forward(start_state,Q_list)
+            temp =  torch.tensor(reward,device=device) + self.gamma*(1-int(done))*self.Qmix.forward(end_state,Q_list_next_state) - self.Qmix.forward(start_state,Q_list)
             loss += temp*temp
 
         loss.backward()
@@ -112,67 +116,111 @@ class trainer:
 
         done = False
         environment = copy.deepcopy(self.env)
-
+        rewards = []
+        dbfile = open('env', 'ab')
         for i in range(epochs):
             temp = []
             start_state = environment.get_state_torch()
-            # Add node
-            data = environment.get_state_torch()
-            _,k,xk = self.agent_addnode.action(data)
-            environment.step( ( "add node", (k,xk.detach().numpy()) ) )
-            if k == 0:
-                done = True
-                environment = copy.deepcopy(self.env)
-                print("Continue")
-                continue
+            done = False
 
-            temp.append(
-                {
-                    "action type" : "add node",
-                    "agent" : self.agent_addnode,
-                    "state" : data,
-                    "discrete action" : k,
-                    "continuous action" : xk,
-                    "new state" : environment.get_state_torch()
-                }
-            )
+            if random() > self.epsilon:
+                # MaxQ action
+                # Add node
+                data = environment.get_state_torch()
+                _,k,xk = self.agent_addnode.action(data)
+                environment.step( ( "add node", (k,xk.cpu().detach().numpy()) ) )
+                if k == 0:
+                    done = True
+                    environment = copy.deepcopy(self.env)
 
-            # Add edge
-            data = environment.get_state_torch()
-            _,k,xk = self.agent_addedge.action(data)
-            environment.step( ( "add edge", (k,xk.detach().numpy().item()) ) )
-            temp.append(
-                {
-                    "action type" : "add edge",
-                    "agent" : self.agent_addedge,
-                    "state" : data,
-                    "discrete action" : k,
-                    "continuous action" : xk,
-                    "new state" : environment.get_state_torch()
-                }
-            )
+                temp.append(
+                    {
+                        "action type" : "add node",
+                        "agent" : self.agent_addnode,
+                        "state" : data,
+                        "discrete action" : k,
+                        "continuous action" : xk,
+                        "new state" : environment.get_state_torch()
+                    }
+                )
 
-            # Edit node
+                data = environment.get_state_torch()
+                _,k,xk = self.agent_addedge.action(data)
+                if not(done):
+                    environment.step( ( "add edge", (k,xk.cpu().detach().numpy().item()) ) )
+                temp.append(
+                    {
+                        "action type" : "add edge",
+                        "agent" : self.agent_addedge,
+                        "state" : data,
+                        "discrete action" : k,
+                        "continuous action" : xk,
+                        "new state" : environment.get_state_torch()
+                    }
+                )
 
-            # Edit weights
+                # Edit node
+
+                # Edit weights
+
+            else:
+                # random action
+
+                # Add node
+                data = environment.get_state_torch()
+                k = np.random.choice([0,1],1,p=[0.0001,1-0.0001])[0]
+                xk,_ = self.agent_addnode.rn_action(data,k)
+                environment.step( ( "add node", (k,xk.cpu().detach().numpy()) ) )
+                if k == 0:
+                    done = True
+                    environment = copy.deepcopy(self.env)
+
+                temp.append(
+                    {
+                        "action type" : "add node",
+                        "agent" : self.agent_addnode,
+                        "state" : data,
+                        "discrete action" : k,
+                        "continuous action" : xk,
+                        "new state" : environment.get_state_torch()
+                    }
+                )
+                
+                # Add edge
+                data = environment.get_state_torch()
+                n = environment.n
+                k = np.random.choice(list(range(0,2**(n-1)-2)),1)[0]
+                xk,_ = self.agent_addedge.rn_action(data,k)
+                if not(done):
+                    environment.step( ( "add edge", (k,xk.cpu().detach().numpy().item()) ) )
+                temp.append(
+                    {
+                        "action type" : "add edge",
+                        "agent" : self.agent_addedge,
+                        "state" : data,
+                        "discrete action" : k,
+                        "continuous action" : xk,
+                        "new state" : environment.get_state_torch()
+                    }
+                )
+
+                # Edit node
+
+                # Edit weights
 
             if len(self.buffer) == self.buffer_size:
-                print("learning")
+                print(str(i)+",learning")
                 self.learn()
                 self.buffer = []
 
             if environment.n > self.max_nodes:
-                print("Reset")
                 done = True
                 environment = copy.deepcopy(self.env)
 
-            print("simulating")
-            reward = environment.reward(self.real_data)
-            print(i)
-            print(reward)
-            dbfile = open('environment', 'ab')
-            pickle.dump({'state':environment.get_state(),'G':environment.get_state_nx()}, dbfile)                     
-            dbfile.close()
+            reward = environment.reward(self.real_data,0.3,10000)
+            rewards.append(reward)
+            np.save("rewards.npy",rewards)
+            pickle.dump({'state':environment.get_state(),'G':environment.get_state_nx()}, dbfile)
 
             self.buffer.append(
                 {
@@ -184,3 +232,4 @@ class trainer:
                     "end state" : environment.get_state_torch()
                 }
             )
+        dbfile.close()

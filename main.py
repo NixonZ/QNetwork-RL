@@ -1,12 +1,14 @@
 from environment.env import Env,node
-from environment.distribution import U,Exp,distribution
+from environment.metalog import U,Exp,metalog
 import numpy as np
 # from agent.agent import MPNN,Graph_Representation,Agent
 from trainer import trainer
 from agent.Qmix import Qmix
+from agent.agent import device
 
 p = 2
 b = 16
+n = 6
 
 temp = Env(
     arrival = [lambda t: Exp(0.1),lambda t: Exp(0.1)],
@@ -15,9 +17,13 @@ temp = Env(
         []
     ],
     nodes_list = [
-        node( [ distribution.from_sampler(b,lambda : Exp(0.2)),distribution.from_sampler(b,lambda : Exp(0.23)) ] , 1, p),
+        node( [ 
+            metalog.from_sampler(b,lambda : Exp(0.2),n,(0,np.inf)),
+            metalog.from_sampler(b,lambda : Exp(0.23),n,(0,np.inf)) 
+        ], 1, p),
     ],
-    b = b
+    b = b,
+    n_terms = n
 )
 
 # print(temp.action_space)
@@ -26,8 +32,8 @@ temp = Env(
 
 quantiles = np.array(
     [ 
-        np.array([temp[0] for temp in distribution.from_sampler(b,lambda : Exp(0.2)).quantiles]),
-        np.array([temp[0] for temp in distribution.from_sampler(b,lambda : Exp(0.2)).quantiles])
+        np.array(metalog.from_sampler(b,lambda : Exp(0.2),n,(0,np.inf)).quantile_val),
+        np.array(metalog.from_sampler(b,lambda : Exp(0.2),n,(0,np.inf)).quantile_val)
     ])
 temp.step( ( "add node", (1,quantiles) ) )
 temp.step( ( "add edge", (0, 1.00 ) ) )
@@ -63,9 +69,10 @@ x = data.x
 
 # [ (p.numel(),p.names) for p in agent.parameters() ]
 
-temp = trainer(p,b,temp,100,250,10,[Exp(0.07) for _ in range(10000)],buffer_size=5)
+temp = trainer(p,b,temp,100,250,3,[Exp(0.07) for _ in range(10000)],buffer_size=1000)
+temp.modules.to(device=device)
 print(sum(p.numel() for p in temp.modules.parameters() if p.requires_grad))
-temp.train(1000)
+temp.train(10000)
 
 # temp = Qmix(2,(p,b),1,100,250,10).double()
 # temp.set_weights(data)

@@ -1,6 +1,6 @@
 from typing import Callable, List, Tuple
 import numpy as np
-from scipy.stats import norm,lognorm,chi2,beta,uniform
+from scipy.stats import lognorm
 from random import random
 
 U = lambda : random()
@@ -72,4 +72,4 @@ class distribution():
         for i in range(self.b):
             temp = self.quantile_val[i] - dist.quantile_val[i]
             distance += np.abs(temp)
-        return distance
+        return distance/self.b
