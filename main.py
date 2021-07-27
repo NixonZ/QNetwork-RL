@@ -69,7 +69,7 @@ x = data.x
 
 # [ (p.numel(),p.names) for p in agent.parameters() ]
 
-temp = trainer(p,b,temp,100,250,3,[Exp(0.07) for _ in range(10000)],buffer_size=1000)
+temp = trainer(p,b,temp,100,250,3,[Exp(0.07) for _ in range(10000)],buffer_size=5)
 temp.modules.to(device=device)
 print(sum(p.numel() for p in temp.modules.parameters() if p.requires_grad))
 temp.train(10000)

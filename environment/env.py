@@ -462,7 +462,7 @@ class Env(gym.Env,):
     def reward(self,real_data,sigma=0.3,max_events = 10000):
         Timer = self.simulate(max_events)
         if not(Timer):
-            return -10.0
+            return 0.0
         data = pd.read_csv("./simulation_data.csv")
         del data[data.columns[-1]]
         data = data[ data['Wait time'] >=0 ]['Wait time'].values

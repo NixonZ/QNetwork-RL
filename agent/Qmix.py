@@ -1,6 +1,8 @@
+import torch
 from torch_geometric.data.data import Data
 from agent.agent import Graph_Representation
 import torch.nn as nn
+import torch.nn.functional as F
 
 class Qmix(nn.Module):
 
@@ -14,44 +16,28 @@ class Qmix(nn.Module):
         
         self.weights_2 = nn.Linear(graph_dim,10*1)
         self.bias_2 = nn.Linear(graph_dim,1)
-
-        # Qtot layers
-        self.Qtot_1 = nn.Linear(num_agents,10)
-        # for param in self.Qtot_1.parameters():
-        #     param.requires_grad = False
-        self.Qtot_2 = nn.Linear(10,1)
-        # for param in self.Qtot_2.parameters():
-        #     param.requires_grad = False
         pass
-
-    def hypernetwork(self):
-        for param in self.Qtot_1.parameters():
-            param.requires_grad = True
-        for param in self.Qtot_2.parameters():
-            param.requires_grad = True
-
-    def Q_tot(self,Q_list):
-        x = self.Qtot_1.forward(Q_list)
-        return self.Qtot_2.forward(x)
-
+    
     def set_weights(self,batch: Data):
         h_G = self.f_G.forward(batch)
 
-        weights_1 = self.weights_1.forward(h_G)
-        weights_1 = weights_1.reshape((10,self.num_agents))
-        bias_1 = self.bias_1.forward(h_G)
+        w1 = self.weights_1.forward(h_G).reshape((10,self.num_agents))
+        b1 = self.bias_1.forward(h_G).reshape((10))
 
-        self.Qtot_1._parameters['weight'].data = weights_1
-        self.Qtot_1._parameters['bias'].data = bias_1
+        w2 = self.weights_2.forward(h_G).reshape((1,10))
+        b2 = self.bias_2.forward(h_G).reshape((1))
 
-        weights_2 = self.weights_2.forward(h_G)
-        weights_2 = weights_2.reshape((1,10))
-        bias_2 = self.bias_2.forward(h_G)
+        return w1,b1,w2,b2
 
-        self.Qtot_2._parameters['weight'].data = weights_2
-        self.Qtot_1._parameters['bias'].data = bias_2
+    def forward(self,batch: Data,Q_list,hat=False):
+        if not(hat):
+            w1,b1,w2,b2 = self.set_weights(batch)
+        else:
+            with torch.no_grad():
+                w1,b1,w2,b2 = self.set_weights(batch)
+                
+        z1 = torch.matmul(w1,Q_list)  + b1
+        z2 = F.elu(z1)
+        z = torch.matmul(w2, z2) + b2
 
-    def forward(self,batch: Data,Q_list):
-        self.set_weights(batch)
-        return self.Q_tot(Q_list)
-        
+        return z

@@ -378,9 +378,10 @@ class Agent(nn.Module):
 
     def Q_hat(self,batch: Data):
         n = batch.num_nodes
-        h_G = self.f_G.forward(batch)
+        with torch.no_grad():
+            h_G = self.f_G.forward(batch)
 
-        Q_sum = torch.zeros((1),device=device)
+        Q_sum = torch.zeros((1),device=device,dtype=torch.float64)
 
         if self.agent_type == "add node":
             '''
@@ -454,11 +455,3 @@ class Agent(nn.Module):
             raise NotSupportedError
 
         return Q_sum
-
-    def fix_w(self):
-        for param in self.action_value.parameters():
-            param.requires_grad = False
-    
-    def train_w(self):
-        for param in self.action_value.parameters():
-            param.requires_grad = True
