@@ -21,6 +21,7 @@ class trainer:
         graph_dim: int, 
         prop_steps: int,
         real_data,
+        arrival_data,
         max_nodes: int = 10, 
         buffer_size: int = 50000,
         train_size: int = 100, 
@@ -45,6 +46,7 @@ class trainer:
         self.env = environment
         self.max_nodes = max_nodes
         self.real_dist = metalog.from_data(b,real_data,6,(0,np.inf) )
+        self.arrival_data = arrival_data
         # self.real_data = real_data
 
         self.buffer = []
@@ -370,7 +372,7 @@ class trainer:
             if environment.n > self.max_nodes:
                 done = True
 
-            reward = environment.reward(self.real_dist,0.3,10000,test_name)
+            reward = environment.reward(self.arrival_data,self.real_dist,0.3,10000,test_name)
             if reward > max_reward:
                 max_reward = reward
                 bestfile = open( savepath + "/bestenv", 'ab')

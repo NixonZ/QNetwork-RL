@@ -7,7 +7,7 @@ from agent.Qmix import Qmix
 from agent.agent import device
 
 p = 2
-b = 16
+b = 32
 n = 6
 M = 100
 
@@ -72,10 +72,10 @@ x = data.x
 
 # [ (p.numel(),p.names) for p in agent.parameters() ]
 
-temp = trainer(p,b,M,temp,100,250,3,[Exp(0.07) for _ in range(10000)], max_nodes=4, buffer_size=500, lr= 0.0001*6, gamma = 0.9, epsilon = 0.15)
+temp = trainer(p,b,M,temp,10,25,3,[Exp(0.7) for _ in range(10000)], max_nodes=5, buffer_size=5e5, train_size=100, lr= 0.0001*6, gamma = 0.9, epsilon = 0.15)
 temp.modules.to(device=device)
 print(sum(p.numel() for p in temp.modules.parameters() if p.requires_grad))
-temp.train(10000,"test1")
+temp.train(100000,"test1")
 
 # temp = Qmix(2,(p,b),1,100,250,10).double()
 # temp.set_weights(data)

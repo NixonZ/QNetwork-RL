@@ -5,11 +5,11 @@ from gym import spaces
 import numpy as np
 from environment.metalog import metalog
 
-from simulationpy import Station,QNetwork,INF
+from queuesimpy import Station,QNetwork,INF
 
 from torch_geometric.data import Data
 from torch_geometric.utils import from_networkx
-
+import copy
 import networkx as nx
 
 import pandas as pd
@@ -156,6 +156,7 @@ class Env(gym.Env,):
             # action_parameter[1] -> R:[0,1]
             i = action_parameter[0][0]
             j = action_parameter[0][1]
+            save = copy.deepcopy(self.network)
             assert(j > i)
             connected = False
             index = 0
@@ -165,7 +166,10 @@ class Env(gym.Env,):
                     break
                 index += 1
             
-            if not(connected) and len(self.network[i]) == 0:
+            if action_parameter[1] == 1.0:
+                self.network[i] = [(j,1.0)]
+            
+            elif not(connected) and len(self.network[i]) == 0:
                 self.network[i].append((j,1))
             
             elif connected and len(self.network[i]) == 1:
@@ -184,10 +188,9 @@ class Env(gym.Env,):
                         continue
                     if adj[1] + zeta < 0:
                         zeroed += 1
-                        zeta = ( adj[1] + traffic_div )/(m-1-zeroed)
+                        zeta = ( adj[1] + zeta*(m-zeroed) )/(m-1-zeroed)
                         self.network[i][k] = (adj[0],0)
                     else:
-                        assert(adj[1] + zeta <= 1)
                         self.network[i][k] = (adj[0],adj[1] + zeta)
                 self.network[i] = [ temp for temp in self.network[i] if temp[1]>0] # Remove zeroed enteries.
                 self.network[i] = sorted(self.network[i],key=lambda x:x[0])
@@ -204,17 +207,20 @@ class Env(gym.Env,):
                         continue
                     if adj[1] + zeta < 0:
                         zeroed += 1
-                        zeta = ( adj[1] + traffic_div )/(m-1-zeroed)
+                        zeta = ( adj[1] + zeta*(m-zeroed) )/(m-1-zeroed)
                         self.network[i][k] = (adj[0],0)
                     else:
-                        assert(adj[1] + zeta <= 1)
                         self.network[i][k] = (adj[0],adj[1] + zeta)
                 self.network[i] = [ temp for temp in self.network[i] if temp[1]>0] # Remove zeroed enteries.
                 self.network[i] = sorted(self.network[i],key=lambda x:x[0])
                 
-            if sum([adj[1] for adj in self.network[i]])!=1:
-                print(self.network[i])
-                print(action_parameter)
+            # if sum([adj[1] for adj in self.network[i]])!=1:
+            #     print("----")
+            #     print(save)
+            #     print("----")
+            #     print(self.network)
+            #     print("----")
+            #     print(action_parameter)
 
         return self.get_state(), reward, done, {}
 
@@ -298,11 +304,72 @@ class Env(gym.Env,):
                 Timer = False
         return Timer
     
-    def reward(self,real_dist,sigma=0.3,max_events = 10000,test_name="simulation_data"):
-        Timer = self.simulate(max_events,test_name)
+    def rew_simulate(self,arrival_data,max_events = 10000,test_name="simulation_data"):
+
+        # arrival_data = pandas dataframe with two columns, time of arrival and priority level.
+        arrival_times_list = []
+        priorities = sorted(arrival_data['Priority Level'].unique())
+        for priority in priorities:
+            arrival_times_list.append(arrival_data[arrival_data['Priority Level']==priority]['Time of arrival'].to_list())
+            
+        station_list = [ node.convert_to_station() for node in self.node_list ]
+        patience_time = [ lambda t: INF ]*self.num_priority
+        # arrival_processes = self.arrival
+        iters = []
+        for priority in priorities:
+            iters.append(iter(arrival_times_list[priority]))
+
+        arrival_processes = []
+        for priority in priorities:
+            arrival_processes.append(lambda t: next(iters[priority],np.inf))
+
+        start = time.time()
+        Timer = True
+        System = QNetwork(0,0,self.network,station_list,patience_time)
+
+        discrete_events = 0
+        arriving_customer = 0
+        t = 0.0
+
+        ta = np.array(call_event_type_list(arrival_processes,t))
+
+        output_folder = "./output"
+        System.initialize_CSV( output_folder + '/'+test_name)
+
+
+        System.logger(t)
+
+        while discrete_events < max_events and not( all(ta == np.inf) and np.isinf(least_dep_time) ):
+            least_station_index,least_dep_time = System.find_least_dep_time()
+
+            t = np.min( [least_dep_time] + ta.tolist() )
+            System.server_updates(t)
+
+            if t == np.min(ta):
+                # arrival happening
+                priority = np.argmin(ta)
+                System.add_customer_to_graph(t, [priority,arriving_customer])
+                # System.add_customer_to_graph_vir(t, [priority,arriving_customer],True,arrival_processes,ta)
+                arriving_customer += 1
+                ta[priority] = arrival_processes[priority](t)
+                least_station_index,least_dep_time = System.find_least_dep_time()
+            else:
+                System.departure_updates(least_station_index,t)
+                least_station_index,least_dep_time = System.find_least_dep_time()
+                
+            if discrete_events%(max_events//10) == 0:
+                System.dump_counter_variable_memory( output_folder + '/' + test_name,True,False)
+            discrete_events += 1
+            if time.time() - start > 10.0:
+                Timer = False
+        System.dump_counter_variable_memory( output_folder + '/' + test_name,True,False)
+        return Timer
+    
+    def reward(self,arrival_data,real_dist,sigma=0.3,max_events = 10000,test_name="simulation_data"):
+        Timer = self.rew_simulate(arrival_data,max_events,test_name)
         if not(Timer):
             return -1.0
-        output_folder = "./output/"
+        output_folder = "./output"
         data = pd.read_csv( output_folder + '/'+test_name+".csv")
         del data[data.columns[-1]]
         data = data[ data['Wait time'] >=0 ]['Wait time'].values
@@ -311,6 +378,7 @@ class Env(gym.Env,):
         except:
             return -1.0
         dist2 = real_dist
+        # return ks_2samp(data,real_data)
 
         tot_var = dist1.distance(dist2)
         # return np.exp( -1*( (tot_var*tot_var)/(2*sigma*sigma) ) )/(sigma*np.sqrt(2*np.pi))

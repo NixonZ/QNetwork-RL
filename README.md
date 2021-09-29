@@ -7,4 +7,4 @@ The environment is used to construct a Queueing network(with priority types) seq
 4. Edit Weights: Tuple(Tuple(Discrete(![equation](https://latex.codecogs.com/svg.latex?n)),Discrete(![equation](https://latex.codecogs.com/svg.latex?n))),Box(0.0, 1.0, (1,), float32))
 
 ### Requirements
-SimulationPy library is required for this environment. You can install it from my [Github repository](https://github.com/NixonZ/SimulationPy).
+QueueSimPy library is required for this environment. You can install it from my [Github repository](https://github.com/NixonZ/QueueSimPy).
